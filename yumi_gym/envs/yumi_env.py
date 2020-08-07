@@ -13,7 +13,6 @@ class YumiEnv(gym.Env):
         p.connect(p.GUI)
         p.resetDebugVisualizerCamera(cameraDistance=1.5, cameraYaw=90, cameraPitch=-40, cameraTargetPosition=[0,0,-0.1])
         self.step_counter = 0
-        self.max_episode = 200
         self.joints = ["yumi_joint_1_r", "yumi_joint_2_r", "yumi_joint_3_r", "yumi_joint_4_r",
                     "yumi_joint_5_r", "yumi_joint_6_r", "yumi_joint_7_r", "Link1", "Link11",
                     "Link2", "Link22", "Link3", "Link33", "Link4", "Link44", "Link5", "Link51",
@@ -24,45 +23,46 @@ class YumiEnv(gym.Env):
         self.action_space = spaces.Box(np.array([-1]*len(self.joints)), np.array([1]*len(self.joints)))
         self.observation_space = spaces.Box(np.array([-1]*len(self.joints)), np.array([1]*len(self.joints)))
 
-    def step(self, action):
+    def step(self, action, custom_reward=None):
         p.configureDebugVisualizer(p.COV_ENABLE_SINGLE_STEP_RENDERING)
         p.setJointMotorControlArray(self.yumiUid, [self.joint2Index[joint] for joint in self.joints], p.POSITION_CONTROL, action)
         p.stepSimulation()
+        # get joint states
+        jointStates = {}
+        for joint in self.joints:
+            jointStates[joint] = p.getJointState(self.yumiUid, self.joint2Index[joint]) + p.getLinkState(self.yumiUid, self.joint2Index[joint])
         # check collision
-        # isCollision = False
+        # collision = False
         # for joint in self.joints:
         #     if len(p.getContactPoints(bodyA=self.yumiUid, linkIndexA=self.joint2Index[joint])) > 0:
-        #         isCollision = True
+        #         collision = True
         #         print("Collision Occurred in Joint {}!!!".format(joint))
         #         p.changeVisualShape(self.yumiUid, self.joint2Index[joint], rgbaColor=[1,0,0,1])
         #     else:
         #         # recover color
         #         p.changeVisualShape(self.yumiUid, self.joint2Index[joint], rgbaColor=self.jointColor[joint])
-        isCollision = False
+        collision = False
         collisionJoints = set()
         for joint in self.joints:
             for point in p.getContactPoints(bodyA=self.yumiUid, linkIndexA=self.joint2Index[joint]):
                 collisionJoints.add(p.getJointInfo(self.yumiUid, point[3])[1].decode('utf-8'))
                 collisionJoints.add(p.getJointInfo(self.yumiUid, point[4])[1].decode('utf-8'))
         if len(collisionJoints):
-            isCollision = True
+            collision = True
             print("Collision Occurred in Joint {}".format(collisionJoints))
         
         self.step_counter += 1
 
-        if isCollision:
-            reward = -50
-            done = True
-        elif self.step_counter >= self.max_episode:
-            reward = 0
-            done = True
-        else:
+        if custom_reward is None:
+            # default reward
             reward = 0
             done = False
+        else:
+            # custom reward
+            reward, done = custom_reward(jointStates=jointStates, collision=collision, step_counter=self.step_counter)
 
-        info = {'isCollision': isCollision}
-        jointStates = p.getJointStates(self.yumiUid, [self.joint2Index[joint] for joint in self.joints])
-        observation = [state[0] for state in jointStates]
+        info = {'collision': collision}
+        observation = [jointStates[joint][0] for joint in self.joints]
         return observation, reward, done, info
 
     def reset(self):
